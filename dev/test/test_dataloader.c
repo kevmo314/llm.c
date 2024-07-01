@@ -268,7 +268,7 @@ int main(void) {
 
     // generate a few dummy shards of data with incrementing tokens
     int header[HEADER_SIZE];
-    uint16_t tokens[num_tokens];
+    uint32_t tokens[num_tokens];
     for (int shard_id = 0; shard_id < num_shards; shard_id++) {
         // ensure unique tokens across the shards for ez accounting below
         int token_offset = shard_id * num_tokens;
@@ -282,7 +282,7 @@ int main(void) {
         header[2] = num_tokens; // number of tokens within
         FILE* shard_file = fopenCheck(shard_name, "wb");
         fwrite(header, sizeof(int), HEADER_SIZE, shard_file);
-        fwrite(tokens, sizeof(uint16_t), num_tokens, shard_file);
+        fwrite(tokens, sizeof(uint32_t), num_tokens, shard_file);
         fcloseCheck(shard_file);
         printf("Wrote shard %s\n", shard_name);
     }

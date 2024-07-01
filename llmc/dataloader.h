@@ -43,7 +43,7 @@ typedef struct {
     // file handle
     FILE* tokens_file;
     // data buffers
-    uint16_t* buffer; // we fread data from file into this buffer
+    uint32_t* buffer; // we fread data from file into this buffer
     int* inputs;  // input tokens into transformer
     int* targets; // target tokens for the transformer
     // random shuffle related variables
@@ -86,13 +86,13 @@ int64_t dataloader_load_shard_(DataLoader *loader, int shard_index) {
     loader->file_size_bytes = ftell(loader->tokens_file); // read the offset, i.e. file size
     fseekCheck(loader->tokens_file, 0, SEEK_SET); // seek back to the beginning
     // we expect ntok in the file to be consistent with filesize, assert that is the case
-    int64_t expected_file_size = HEADER_SIZE * sizeof(int) + ntok * sizeof(uint16_t);
+    int64_t expected_file_size = HEADER_SIZE * sizeof(int) + ntok * sizeof(uint32_t);
     if (loader->file_size_bytes != expected_file_size) {
         printf("Error: file size is not as expected\n");
         exit(EXIT_FAILURE);
     }
-    // -1 uint16_t due to us taking B*T+1 tokens but moving by B*T tokens
-    loader->shard_num_samples = (ntok * sizeof(uint16_t) - sizeof(uint16_t)) / loader->total_batch_size_bytes;
+    // -1 uint32_t due to us taking B*T+1 tokens but moving by B*T tokens
+    loader->shard_num_samples = (ntok * sizeof(uint32_t) - sizeof(uint32_t)) / loader->total_batch_size_bytes;
     return ntok;
 }
 
@@ -160,8 +160,8 @@ void dataloader_init(DataLoader *loader,
     loader->tokens_file = NULL;
     loader->should_shuffle = should_shuffle;
     loader->header_bytes = HEADER_SIZE * sizeof(int);
-    loader->total_batch_size_bytes = ((loader->num_processes * (loader->B * loader->T)) * sizeof(uint16_t));
-    loader->local_batch_offset_bytes = loader->process_rank * loader->B * loader->T * sizeof(uint16_t);
+    loader->total_batch_size_bytes = ((loader->num_processes * (loader->B * loader->T)) * sizeof(uint32_t));
+    loader->local_batch_offset_bytes = loader->process_rank * loader->B * loader->T * sizeof(uint32_t);
 
     // glob to get the list of files matching the pattern, these are our data shards
     int glob_status = glob(filename_pattern, 0, NULL, &loader->glob_result);
@@ -198,7 +198,7 @@ void dataloader_init(DataLoader *loader,
     // printf("DataLoader: Found %ld tokens across %zu shards\n", ntok_total, loader->glob_result.gl_pathc);
 
     // allocate all the space we'll need
-    loader->buffer = (uint16_t*)mallocCheck((B * T + 1) * sizeof(uint16_t));
+    loader->buffer = (uint32_t*)mallocCheck((B * T + 1) * sizeof(uint32_t));
     loader->inputs = (int*)mallocCheck(B * T * sizeof(int));
     loader->targets = (int*)mallocCheck(B * T * sizeof(int));
     loader->num_tokens = ntok_total;
@@ -217,9 +217,9 @@ void dataloader_next_batch(DataLoader *loader) {
 
     size_t B = loader->B;
     size_t T = loader->T;
-    // read B*T+1 uint16_t tokens from the file into buffer
+    // read B*T+1 uint32_t tokens from the file into buffer
     fseekCheck(loader->tokens_file, current_offset, SEEK_SET);
-    freadCheck(loader->buffer, sizeof(uint16_t), B*T+1, loader->tokens_file);
+    freadCheck(loader->buffer, sizeof(uint32_t), B*T+1, loader->tokens_file);
     // decode the buffer into inputs and targets (cast to int)
     for (int i = 0; i < B*T; i++) {
         loader->inputs[i] = (int)loader->buffer[i];
@@ -253,7 +253,7 @@ void dataloader_free(DataLoader *loader) {
 /*
 Copy pasting the section on the eval datafile format, from data_common.py:
 - First comes a header with 256 int32s
-- The examples follow, each example is a stream of uint16_t:
+- The examples follow, each example is a stream of uint32_t:
     - <START_EXAMPLE> delimiter of 2**16-1, i.e. 65,535
     - <EXAMPLE_BYTES>, bytes encoding this example, allowing efficient skip to next
     - <EXAMPLE_INDEX>, the index of the example in the dataset
@@ -278,7 +278,7 @@ typedef struct {
     size_t T; // maximum context length of the model
     // input handling and its state
     FILE* eval_file;
-    uint16_t* buffer; // we fread data from file into this buffer
+    uint32_t* buffer; // we fread data from file into this buffer
     // public variables that could be accessed from outside
     int num_examples; // in total across all processes
     int num_batches; // to process the entire dataset across all processes
@@ -312,15 +312,15 @@ void evalloader_reset(EvalLoader *loader) {
     int64_t header_bytes = HEADER_SIZE * sizeof(int);
     fseekCheck(loader->eval_file, header_bytes, SEEK_SET);
     for (int i = 0; i < loader->start_example_index; i++) {
-        uint16_t example_header[3];
-        // read 3 uint16_t values: <START_EXAMPLE>, <EXAMPLE_BYTES>, <EXAMPLE_INDEX>
-        freadCheck(&example_header[0], sizeof(uint16_t), 3, loader->eval_file);
+        uint32_t example_header[3];
+        // read 3 uint32_t values: <START_EXAMPLE>, <EXAMPLE_BYTES>, <EXAMPLE_INDEX>
+        freadCheck(&example_header[0], sizeof(uint32_t), 3, loader->eval_file);
         // validate the <START_EXAMPLE> delimiter
         assert(example_header[0] == 65535); // <START_EXAMPLE> delimiter
         // validate the <EXAMPLE_INDEX>
         assert(example_header[2] == i); // <EXAMPLE_INDEX> should match the loop index
         // skip to the next example, keeping in mind that we already read the header
-        size_t remaining_bytes = example_header[1] - sizeof(uint16_t) * 3;
+        size_t remaining_bytes = example_header[1] - sizeof(uint32_t) * 3;
         assert(remaining_bytes > 0); // we expect some bytes in the example
         fseekCheck(loader->eval_file, remaining_bytes, SEEK_CUR);
     }
@@ -351,14 +351,14 @@ void evalloader_init(EvalLoader *loader,
     size_t longest_example_bytes = header[3]; // longest example in the file
     // basic sensibility check we could relax later. but roughly each example
     // contains the prompt (or "context") and 4 completions, all of these have to be
-    // up to T tokens, and their tokens are uint16_t (so 2 bytes/token).
+    // up to T tokens, and their tokens are uint32_t (so 2 bytes/token).
     // There's a few more things in each example but they are minor.
     // So longest example should be roughly this. Just trying to make sure it's sensible.
     assert(longest_example_bytes > 0 && longest_example_bytes < (1+ASSUMED_NUM_COMPLETIONS)*T*2);
 
     // allocate all the space we'll need
     int can_fit_examples = B / ASSUMED_NUM_COMPLETIONS;
-    loader->buffer = (uint16_t*)mallocCheck(longest_example_bytes);
+    loader->buffer = (uint32_t*)mallocCheck(longest_example_bytes);
     loader->inputs = (int*)calloc(B * T, sizeof(int));
     loader->targets = (int*)calloc(B * T, sizeof(int));
     loader->mask = (char*)mallocCheck(B * T * sizeof(char));
@@ -377,15 +377,15 @@ void evalloader_next_example_(EvalLoader *loader, int example_batch_index) {
     size_t T = loader->T;
     int batch_dim_offset = example_batch_index * ASSUMED_NUM_COMPLETIONS;
     // read the current example header
-    uint16_t example_header[3];
-    freadCheck(&example_header[0], sizeof(uint16_t), 3, loader->eval_file);
+    uint32_t example_header[3];
+    freadCheck(&example_header[0], sizeof(uint32_t), 3, loader->eval_file);
     // validate the <START_EXAMPLE> delimiter
     assert(example_header[0] == 65535); // <START_EXAMPLE> delimiter
     // validate the <EXAMPLE_INDEX>
     assert(example_header[2] == loader->current_example_index); // <EXAMPLE_INDEX> should match the loop index
     assert(example_header[2] >= loader->start_example_index && example_header[2] < loader->end_example_index);
-    // read the rest of the example (we have space for 3 more uint16_t values in buffer, it's ok)
-    size_t example_bytes = example_header[1] - sizeof(uint16_t) * 3;
+    // read the rest of the example (we have space for 3 more uint32_t values in buffer, it's ok)
+    size_t example_bytes = example_header[1] - sizeof(uint32_t) * 3;
     // read example_bytes into buffer. careful that this is actually in the units of bytes
     freadCheck(loader->buffer, sizeof(char), example_bytes, loader->eval_file);
     // process the example label
@@ -402,7 +402,7 @@ void evalloader_next_example_(EvalLoader *loader, int example_batch_index) {
     // process the context
     // the context is shared for all completions, so we insert it into all data rows equally
     int context_length = (int)loader->buffer[2];
-    uint16_t *context_tokens_start = &loader->buffer[3]; // where the tokens start
+    uint32_t *context_tokens_start = &loader->buffer[3]; // where the tokens start
     assert(context_length > 0 && context_length < T); // context is non-empty and up to T
     for (int b = 0; b < num_completions; b++) {
         for (int i = 0; i < context_length; i++) {
@@ -412,11 +412,11 @@ void evalloader_next_example_(EvalLoader *loader, int example_batch_index) {
         }
     }
     // process the completions, insert them in their row, right after the (shared) context
-    uint16_t *completions_iter = loader->buffer + 3 + context_length;
+    uint32_t *completions_iter = loader->buffer + 3 + context_length;
     for (int c = 0; c < num_completions; c++) {
         int coff = batch_dim_offset + c;
         int completion_length = (int)completions_iter[0];
-        uint16_t *completion_tokens_start = completions_iter + 1;
+        uint32_t *completion_tokens_start = completions_iter + 1;
         assert(completion_length > 0 && context_length + completion_length < T); // things fit?
         for (int i = 0; i < completion_length; i++) {
             int tok_cur = (int)completion_tokens_start[i];

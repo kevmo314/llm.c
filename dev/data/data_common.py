@@ -36,11 +36,11 @@ def write_datafile(filename, toks):
     header[1] = 1 # version
     header[2] = len(toks) # number of tokens after the 256*4 bytes of header (each 2 bytes as uint16)
     # construct the tokens numpy array, if not already
-    if not isinstance(toks, np.ndarray) or not toks.dtype == np.uint16:
+    if not isinstance(toks, np.ndarray) or not toks.dtype == np.uint32:
         # validate that no token exceeds a uint16
-        maxtok = 2**16
+        maxtok = 2**32
         assert all(0 <= t < maxtok for t in toks), "token dictionary too large for uint16"
-        toks_np = np.array(toks, dtype=np.uint16)
+        toks_np = np.array(toks, dtype=np.uint32)
     else:
         toks_np = toks
     # write to file
@@ -54,7 +54,7 @@ def write_evalfile(filename, datas):
     Saves eval data as a .bin file, for reading in C.
     Used for multiple-choice style evals, e.g. HellaSwag and MMLU
     - First comes a header with 256 int32s
-    - The examples follow, each example is a stream of uint16_t:
+    - The examples follow, each example is a stream of uint32_t:
         - <START_EXAMPLE> delimiter of 2**16-1, i.e. 65,535
         - <EXAMPLE_BYTES>, bytes encoding this example, allowing efficient skip to next
         - <EXAMPLE_INDEX>, the index of the example in the dataset

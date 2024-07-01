@@ -321,8 +321,8 @@ def _load_data_shard(filename):
         assert header[0] == 20240520, "magic number mismatch in the data .bin file"
         assert header[1] == 1, "unsupported version"
         ntok = header[2] # number of tokens (claimed)
-        # the rest of it are tokens, stored as uint16
-        tokens = np.frombuffer(f.read(), dtype=np.uint16)
+        # the rest of it are tokens, stored as uint32
+        tokens = np.frombuffer(f.read(), dtype=np.uint32)
     assert len(tokens) == ntok, "number of tokens read does not match header?"
     return tokens
 
@@ -652,7 +652,7 @@ if __name__ == "__main__":
     if args.model[0] == "d":
         # from scratch (random weights)
         model_config = {
-            "d12": GPTConfig(block_size=1024, vocab_size=50257, n_layer=12, n_head=12, n_embd=768),
+            "d12": GPTConfig(block_size=1024, vocab_size=128010, n_layer=12, n_head=12, n_embd=768),
             "d24": GPTConfig(block_size=1024, vocab_size=50257, n_layer=24, n_head=16, n_embd=1024),
             "d36": GPTConfig(block_size=1024, vocab_size=50257, n_layer=36, n_head=20, n_embd=1280),
             "d48": GPTConfig(block_size=1024, vocab_size=50257, n_layer=48, n_head=25, n_embd=1600),
@@ -851,6 +851,11 @@ if __name__ == "__main__":
         # keep track of smooth timings, last 20 iterations
         if step > 0 and step > args.num_iterations - 20:
             timings.append(t1-t0)
+
+        if step % 100 == 99:
+            torch.save(model.state_dict(), f"ghc_{step}.bin")
+
+    torch.save(model.state_dict(), f"ghc_final.bin")
 
     # print the average of the last 20 timings, to get something smooth-ish
     timings = timings[-20:]
